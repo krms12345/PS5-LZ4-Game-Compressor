@@ -13,13 +13,15 @@ function tvSetStorage(devices){
     storage.replaceChildren();for(const device of usable)storage.add(new Option(device.name,device.path));
     if(!storage.options.length)storage.add(new Option('No writable storage available',''));
     if([...storage.options].some(o=>o.value===previous))storage.value=previous;
-    const drive=byId('drive');drive.replaceChildren();for(const device of usable.filter(d=>/^\/mnt\/(usb[0-7]|ext[01])$/.test(d.path)))drive.add(new Option(device.name,device.path));
+    const drive=byId('drive');drive.replaceChildren();for(const device of usable.filter(d=>/^\/mnt\/(usb[0-7]|ext[01]\/homebrew)$/.test(d.path)))drive.add(new Option(device.name,device.path));
     const backup=byId('originalLocation'),chosen=backup.value;backup.replaceChildren();
-    for(const device of usable)backup.add(new Option(device.name,device.path==='/data/homebrew'?'/data/game-backups':device.path+'/game-backups'));
+    for(const device of usable)backup.add(new Option(device.name,backupRoot(device.path)));
     if([...backup.options].some(o=>o.value===chosen))backup.value=chosen;
     tvDestinationChanged(storage.value!==previous);updateOriginalMovePath();
 }
-function sourceDrive(){const path=selected()?.sourcePath||'';return path.startsWith('/data/')?'/data/homebrew':path.match(/^\/mnt\/(usb[0-7]|ext[01])(?=\/)/)?.[0]||'';}
+function sourceDrive(){const path=selected()?.sourcePath||'';const extended=path.match(/^\/mnt\/ext[01](?=\/)/)?.[0];return path.startsWith('/data/')?'/data/homebrew':extended?extended+'/homebrew':path.match(/^\/mnt\/usb[0-7](?=\/)/)?.[0]||'';}
+// Backups sit beside the homebrew folder so game scanners do not pick them up.
+function backupRoot(path){return path.replace(/\/homebrew$/,'')+'/game-backups';}
 function tvDestinationChanged(reset=true){
     const destination=byId('destinationStorage').value,source=sourceDrive();
     const swapOption=byId('originalAction').querySelector('[value="swap"]');
@@ -29,7 +31,7 @@ function tvDestinationChanged(reset=true){
     byId('mode').value=swap?'swap':destination==='/data/homebrew'?'internal':'usb';
     byId('drive').value=destination==='/data/homebrew'?'':destination;
     if(reset&&selected()&&destination)byId('output').value=destination+'/'+selected().titleId+'-app_AMPR';
-    if(swap){if(reset||!byId('internal').value.startsWith(source+'/'))byId('internal').value=source+'/'+selected().titleId+'-app_AMPR';byId('originalLocation').value=destination==='/data/homebrew'?'/data/game-backups':destination+'/game-backups';byId('verifyOutput').checked=true;byId('verifyCopy').checked=true;}
+    if(swap){if(reset||!byId('internal').value.startsWith(source+'/'))byId('internal').value=source+'/'+selected().titleId+'-app_AMPR';byId('originalLocation').value=backupRoot(destination);byId('verifyOutput').checked=true;byId('verifyCopy').checked=true;}
     byId('destinationSummary').textContent=swap?'Swap: converted game → '+selected().sourceStorage+' · original → '+byId('destinationStorage').selectedOptions[0].textContent:byId('output').value||'A new game folder will be created automatically.';
     updateOriginalMovePath();updateConversionOptions(reset);
 }
