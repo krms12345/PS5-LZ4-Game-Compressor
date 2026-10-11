@@ -57,6 +57,8 @@ try:
     assert request('/api/nonexistent')[0]==400
     api('/api/gc/ampr-lz4/delete-partial','GET',False)
     api('/api/gc/ampr-lz4/delete-partial','POST')
+    mounts=api('/api/gc/ampr-lz4/mounts')
+    assert [d['path'] for d in mounts['drives']][:2]==['/mnt/ext0','/mnt/ext1'] and isinstance(mounts['mounts'],list)
     api('/api/control/quit?confirm=yes','GET',False)
     api('/api/control/quit','POST',False)
     assert b'quitDialog' in request('/')[1]

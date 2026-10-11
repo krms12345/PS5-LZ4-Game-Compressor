@@ -16,6 +16,10 @@
 #include <chrono>
 #include <sys/statvfs.h>
 #include <sys/stat.h>
+#if defined(__FreeBSD__)||defined(__APPLE__)
+#include <sys/param.h>
+#include <sys/mount.h>
+#endif
 #include <signal.h>
 using J=nlohmann::json;
 namespace fs=std::filesystem;
@@ -59,17 +63,17 @@ static J findGame(const Request&r){auto id=get(r,"titleId"),path=get(r,"sourcePa
 static bool readOnly(const fs::path& root){struct statvfs info{};return fs::is_directory(root)&&statvfs(root.c_str(),&info)==0&&(info.f_flag&ST_RDONLY);}
 static uint64_t freeSpace(const fs::path& root){struct statvfs info{};require(statvfs(root.c_str(),&info)==0,"Cannot measure destination space: "+root.string());require(!(info.f_flag&ST_RDONLY),"Destination is read-only");require(info.f_frsize&&info.f_bavail<=UINT64_MAX/info.f_frsize,"Invalid free-space result");return uint64_t(info.f_bavail)*info.f_frsize;}
 static bool contains(const fs::path& root,const fs::path& path){auto a=fs::weakly_canonical(root),b=fs::weakly_canonical(path);auto i=a.begin(),k=b.begin();while(i!=a.end()&&k!=b.end()&&*i==*k){++i;++k;}return i==a.end();}
-// Writable drives besides the built-in SSD: the M.2 expansion SSD and USB 0-7.
-static std::vector<std::pair<fs::path,std::string>> externalDrives(){std::vector<std::pair<fs::path,std::string>> drives{{"/mnt/ext0","M.2 SSD"}};for(int n=0;n<8;n++)drives.push_back({"/mnt/usb"+std::to_string(n),"USB "+std::to_string(n)});return drives;}
+// Writable drives besides the built-in SSD: extended storage (the M.2 expansion SSD mounts at ext0 or ext1 depending on setup) and USB 0-7.
+static std::vector<std::pair<fs::path,std::string>> externalDrives(){std::vector<std::pair<fs::path,std::string>> drives{{"/mnt/ext0","Extended storage (ext0)"},{"/mnt/ext1","Extended storage (ext1)"}};for(int n=0;n<8;n++)drives.push_back({"/mnt/usb"+std::to_string(n),"USB "+std::to_string(n)});return drives;}
 static bool mountedDrive(const fs::path& root){struct stat device{},parent{};return fs::is_directory(root)&&stat(root.c_str(),&device)==0&&stat(root.parent_path().c_str(),&parent)==0&&device.st_dev!=parent.st_dev;}
 static bool onExternalDrive(const fs::path& path){for(auto& drive:externalDrives())if(mountedDrive(drive.first)&&contains(drive.first,path))return true;return false;}
 static std::string storageName(const std::string& path){if(path.rfind("/data/",0)==0)return "Internal SSD";for(auto& drive:externalDrives())if(path.rfind(drive.first.string()+"/",0)==0)return drive.second;return "Other storage";}
-static fs::path destination(const std::string& input,const fs::path& source){fs::path path(input);require(path.is_absolute()&&path!=path.root_path(),"Choose an absolute new destination folder");require(!contains(source,path),"Destination cannot be inside the mounted game");require(!fs::exists(path),"Destination already exists; choose a new folder");auto canonical=fs::weakly_canonical(path);bool allowed=contains("/data/homebrew",canonical)||onExternalDrive(canonical);require(allowed,"Choose an internal homebrew folder, the M.2 SSD or a connected USB drive");fs::create_directories(canonical.parent_path());require(!fs::exists(canonical),"Destination already exists");return canonical;}
+static fs::path destination(const std::string& input,const fs::path& source){fs::path path(input);require(path.is_absolute()&&path!=path.root_path(),"Choose an absolute new destination folder");require(!contains(source,path),"Destination cannot be inside the mounted game");require(!fs::exists(path),"Destination already exists; choose a new folder");auto canonical=fs::weakly_canonical(path);bool allowed=contains("/data/homebrew",canonical)||onExternalDrive(canonical);require(allowed,"Choose an internal homebrew folder, extended storage or a connected USB drive");fs::create_directories(canonical.parent_path());require(!fs::exists(canonical),"Destination already exists");return canonical;}
 static bool option(const Request&r,const std::string& key){auto value=get(r,key,"yes");require(value=="yes"||value=="no","Invalid "+key);return value=="yes";}
 static fs::path backupFolder(const Request&r,const fs::path& source,const fs::path& output){
     fs::path folder=get(r,"originalBackup","/data/game-backups");require(folder.is_absolute(),"Choose an absolute original backup folder");folder=fs::weakly_canonical(folder);
     bool allowed=contains("/data/game-backups",folder)||onExternalDrive(folder);
-    require(allowed&&!contains(source,folder)&&!contains(output,folder)&&!contains(folder,output),"Choose a separate backup folder on internal storage, the M.2 SSD or USB");
+    require(allowed&&!contains(source,folder)&&!contains(output,folder)&&!contains(folder,output),"Choose a separate backup folder on internal storage, extended storage or USB");
     fs::create_directories(folder);return folder;
 }
 static J plan(const Request&r,bool measure=true){
@@ -127,6 +131,13 @@ static J route(const Request&r){
     if(path=="/api/gc/job/cancel"){require(mutation,"Use POST to cancel");abortJob=true;return J{{"ok",true},{"message","Cancellation requested"}};}
     if(path=="/api/gc/games"){J games=J::array();auto listing=shadow("games");for(auto& g:listing.at("games")){if(!g.value("managed",false)||!g.value("source_available",false)||!g.value("image_backed",false))continue;games.push_back(J{{"name",g.value("title_name",g.value("title_id",""))},{"titleId",g.value("title_id","")},{"sourcePath",g.value("path","")},{"sourceStorage",storageName(g.value("path",""))},{"readOnlyVerified",g.value("mounted",false)&&readOnly(g.value("runtime_path",std::string()))}});}return J{{"ok",true},{"games",games}};}
     if(path=="/api/gc/ampr-lz4/capacity"){J devices=J::array();auto drives=externalDrives();drives.insert(drives.begin(),{"/data","Internal SSD"});for(auto& [p,name]:drives){bool internal=p=="/data";J d={{"name",name},{"path",internal?"/data/homebrew":p.string()},{"available",false},{"freeBytes",0},{"totalBytes",0}};struct statvfs v{};if(fs::is_directory(p)&&statvfs(p.c_str(),&v)==0&&v.f_frsize&&v.f_blocks<=UINT64_MAX/v.f_frsize){d["available"]=(internal||mountedDrive(p))&&v.f_blocks>0&&!(v.f_flag&ST_RDONLY);d["freeBytes"]=uint64_t(v.f_bavail)*v.f_frsize;d["totalBytes"]=uint64_t(v.f_blocks)*v.f_frsize;}devices.push_back(d);}return J{{"ok",true},{"devices",devices}};}
+    if(path=="/api/gc/ampr-lz4/mounts"){J mounts=J::array(),folders=J::array();
+#if defined(__FreeBSD__)||defined(__APPLE__)
+        int count=getfsstat(nullptr,0,MNT_NOWAIT);if(count>0){std::vector<struct statfs> list(size_t(count)+8);count=getfsstat(list.data(),long(list.size()*sizeof(struct statfs)),MNT_NOWAIT);for(int n=0;n<count;n++){auto& m=list[size_t(n)];mounts.push_back(J{{"mountedOn",m.f_mntonname},{"from",m.f_mntfromname},{"type",m.f_fstypename},{"readOnly",bool(m.f_flags&MNT_RDONLY)},{"totalBytes",uint64_t(m.f_blocks)*m.f_bsize},{"freeBytes",uint64_t(m.f_bavail)*m.f_bsize}});}}
+#endif
+        std::error_code ec;for(auto& entry:fs::directory_iterator("/mnt",ec))folders.push_back(J{{"path",entry.path().string()},{"mountPoint",mountedDrive(entry.path())}});
+        J drives=J::array();for(auto& drive:externalDrives())drives.push_back(J{{"path",drive.first.string()},{"name",drive.second},{"exists",fs::is_directory(drive.first)},{"mountPoint",mountedDrive(drive.first)},{"readOnly",readOnly(drive.first)}});
+        return J{{"ok",true},{"drives",drives},{"mnt",folders},{"mounts",mounts}};}
     if(path=="/api/gc/ampr-lz4/size"){auto g=findGame(r);auto root=g.value("runtime_path","");require(g.value("mounted",false)&&readOnly(root),"Mount the source read-only first");uint64_t n=0,b=0;char error[1024]={};int rc=ampr_backend_measure(root.c_str(),&n,&b,error,sizeof(error));require(rc==0,error);return J{{"ok",true},{"logicalBytes",n},{"requiredOutputBytes",b}};}
     if(path=="/api/control/quit"){require(mutation,"Use POST to quit");require(get(r,"confirm")=="yes","Confirm quitting first");bool active;{std::lock_guard<std::mutex> guard(stateLock);active=state.value("active",false);}require(!active||get(r,"force")=="yes","A conversion is running; confirm cancelling it before quitting");
         // Exit after the response is sent; a running job is cancelled first so it can stop at a safe block boundary.
