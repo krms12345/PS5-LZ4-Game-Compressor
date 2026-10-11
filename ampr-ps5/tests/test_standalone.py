@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Host integration checks; never contacts a console or modifies game files."""
-import pathlib,json,threading,subprocess,time,urllib.request,urllib.error,http.server,socket,tempfile
+import os,pathlib,json,threading,subprocess,time,urllib.request,urllib.error,http.server,socket,tempfile
 root=pathlib.Path(__file__).resolve().parent.parent
 fixture=tempfile.TemporaryDirectory(prefix='lz4-api-source-')
 calls=[]
+drive=tempfile.TemporaryDirectory(prefix='lz4-test-drive-')
+dump=pathlib.Path(drive.name)/'homebrew/PPSA00002-app'
+for name,data in {'eboot.bin':b'Folder executable','sce_sys/param.json':json.dumps({'titleId':'PPSA00002','localizedParameters':{'defaultLanguage':'en-US','en-US':{'titleName':'Folder fixture'}}}).encode(),'assets/repeated':b'folder-block'*40000,'assets/random':os.urandom(100000)}.items():
+    (dump/name).parent.mkdir(parents=True,exist_ok=True);(dump/name).write_bytes(data)
 game={'title_id':'PPSA00001','title_name':'Synthetic fixture','path':fixture.name+'/fixture.ffpfsc','runtime_path':fixture.name,'managed':True,'source_available':True,'mounted':True,'image_backed':True}
 class Shadow(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
@@ -15,7 +19,7 @@ class Shadow(http.server.BaseHTTPRequestHandler):
     def log_message(self,*args):pass
 mock=http.server.ThreadingHTTPServer(('127.0.0.1',10102),Shadow)
 threading.Thread(target=mock.serve_forever,daemon=True).start()
-service=subprocess.Popen([str(root/'build/host-service')],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+service=subprocess.Popen([str(root/'build/host-service')],env=dict(os.environ,STUDIO_TEST_DRIVE=drive.name),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 def request(path,method='GET'):
     req=urllib.request.Request('http://127.0.0.1:15911'+path,method=method)
     try:
@@ -57,6 +61,24 @@ try:
     assert request('/api/nonexistent')[0]==400
     api('/api/gc/ampr-lz4/delete-partial','GET',False)
     api('/api/gc/ampr-lz4/delete-partial','POST')
+    folders=[g for g in api('/api/gc/games')['games'] if g['sourceKind']=='folder']
+    assert len(folders)==1 and folders[0]['titleId']=='PPSA00002' and folders[0]['name']=='Folder fixture' and folders[0]['readOnlyVerified'] and folders[0]['sourceStorage']=='Test drive',folders
+    output=pathlib.Path(drive.name)/'homebrew/PPSA00002-app_AMPR'
+    folderQuery=urllib.parse.urlencode({'titleId':'PPSA00002','sourcePath':folders[0]['sourcePath'],'output':str(output),'level':'7','mode':'usb'})
+    p=api('/api/gc/ampr-lz4/plan?'+folderQuery);assert p['readOnlyVerified'] and p['canStart'] and p['sourceKind']=='folder',p
+    for action in ('delete','move'):api('/api/gc/ampr-lz4/plan?'+folderQuery+'&originalAction='+action,ok=False)
+    api('/api/gc/ampr-lz4/plan?'+folderQuery.replace('mode=usb','mode=swap')+'&originalAction=swap',ok=False)
+    before=len(calls);assert api('/api/gc/ampr-lz4/mount?'+folderQuery,'POST')['message']=='Folder dumps need no mount' and len(calls)==before
+    original={f:f.read_bytes() for f in dump.rglob('*') if f.is_file()}
+    api('/api/gc/ampr-lz4/start?'+folderQuery,'POST')
+    for _ in range(600):
+        state=api('/api/gc/ampr-lz4/status')
+        if not state['active']:break
+        time.sleep(.1)
+    assert state['result']==0 and state['verified'] and state['phase']=='Complete: output verified',state
+    assert (output/'ampr_assets.index').is_file() and not (output/'INCOMPLETE.txt').exists()
+    assert original=={f:f.read_bytes() for f in dump.rglob('*') if f.is_file()}
+    assert [g['sourcePath'] for g in api('/api/gc/games')['games'] if g['sourceKind']=='folder']==[str(dump)]
     mounts=api('/api/gc/ampr-lz4/mounts')
     assert [d['path'] for d in mounts['drives']][:2]==['/mnt/ext1','/mnt/ext0'] and mounts['drives'][0]['name']=='M.2 SSD' and isinstance(mounts['mounts'],list)
     api('/api/control/quit?confirm=yes','GET',False)
@@ -64,6 +86,6 @@ try:
     assert b'quitDialog' in request('/')[1]
     assert api('/api/control/quit?confirm=yes','POST')['message']=='Quitting'
     service.wait(timeout=5);assert service.returncode==0
-    print('PASS: service assets, discovery, mount order, read-only gate, worker limit, method checks, malformed queries, cleanup, status and quit')
+    print('PASS: service assets, discovery, mount order, read-only gate, worker limit, method checks, malformed queries, cleanup, status, folder-dump conversion and quit')
 finally:
-    service.terminate();service.wait(timeout=5);mock.shutdown();fixture.cleanup()
+    service.terminate();service.wait(timeout=5);mock.shutdown();fixture.cleanup();drive.cleanup()

@@ -25,8 +25,10 @@ function backupRoot(path){return path.replace(/\/homebrew$/,'')+'/game-backups';
 function tvDestinationChanged(reset=true){
     const destination=byId('destinationStorage').value,source=sourceDrive();
     const swapOption=byId('originalAction').querySelector('[value="swap"]');
-    const crossDrive=!!source&&!!destination&&source!==destination;swapOption.hidden=!crossDrive;swapOption.disabled=!crossDrive;
-    if(!crossDrive&&byId('originalAction').value==='swap')byId('originalAction').value='keep';
+    // Folder dumps always keep the original; Delete, Move and Swap are for image sources only.
+    const folder=selected()?.sourceKind==='folder';for(const value of ['delete','move']){const option=byId('originalAction').querySelector(`[value="${value}"]`);option.hidden=folder;option.disabled=folder;}
+    const crossDrive=!folder&&!!source&&!!destination&&source!==destination;swapOption.hidden=!crossDrive;swapOption.disabled=!crossDrive;
+    if((!crossDrive&&byId('originalAction').value==='swap')||(folder&&byId('originalAction').value!=='keep'))byId('originalAction').value='keep';
     const swap=byId('originalAction').value==='swap';
     byId('mode').value=swap?'swap':destination==='/data/homebrew'?'internal':'usb';
     byId('drive').value=destination==='/data/homebrew'?'':destination;
