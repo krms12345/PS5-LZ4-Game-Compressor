@@ -6,7 +6,7 @@
 
 LZ4 Game Compressor lets you compress your PS5 games directly on your console, helping reduce the space they occupy without having to transfer them to a PC or create a separate, fully extracted copy.
 
-It works alongside ShadowMountPlus to convert mounted games into AMPR LZ4 asset packs. Everything is managed through a browser-based interface that you can open on your PS5 or another device connected to the same local network.
+It converts games mounted through ShadowMountPlus, or unpacked game folders, into AMPR LZ4 asset packs. Everything is managed through a browser-based interface that you can open on your PS5 or another device connected to the same local network.
 
 ## Getting started
 
@@ -16,11 +16,16 @@ Before starting, make sure you have:
 
 - A homebrew-enabled PS5
 - Payload Manager
-- ShadowMountPlus
-- A game image supported by ShadowMountPlus
+- ShadowMountPlus (for game images)
+- A game image supported by ShadowMountPlus, or an unpacked PS5 game folder
 - Enough available storage for the converted game
 
 The compressor works with games mounted through ShadowMountPlus. It reads the mounted game files directly rather than extracting the original image format itself.
+
+It also finds unpacked game folders (a folder containing `eboot.bin` and `sce_sys/param.json` with a `PPSA` title ID) in these locations:
+
+- `/data/homebrew` and `/data/etaHEN/games`
+- the top level, `homebrew` and `etaHEN/games` folders of the M.2 SSD (`/mnt/ext1`), an external SSD (`/mnt/ext0`) and USB drives (`/mnt/usb0`–`/mnt/usb7`)
 
 ### Launching the compressor
 
@@ -45,9 +50,22 @@ Find the game you want to compress in your library. Each entry shows where its o
 
 Make sure no game is currently running, then select your game and choose **Mount game**.
 
+Game folders are listed as **Folder** and need no mount. Because a folder can't be mounted read-only, the compressor records the size and timestamp of every file before packing and checks them again afterwards. If anything changed, the conversion fails and the output is marked incomplete, so don't write to the game folder (for example over FTP) while it converts.
+
 ### 2. Choose where to save it
 
-Select the internal SSD or a connected USB storage device as your conversion destination.
+Select the internal SSD, the M.2 SSD, an external SSD or a connected USB storage device as your conversion destination.
+
+| Storage | Path | Default game folder |
+|---|---|---|
+| Internal SSD | `/data` | `/data/homebrew` |
+| M.2 SSD | `/mnt/ext1` | `/mnt/ext1/homebrew` |
+| External SSD | `/mnt/ext0` | `/mnt/ext0/homebrew` |
+| USB 0–7 | `/mnt/usb0`–`/mnt/usb7` | drive root |
+
+Original-game backups go to a `game-backups` folder beside `homebrew` (for example `/mnt/ext1/game-backups`), so game scanners don't list them.
+
+If a drive doesn't appear, open `http://<PS5_IP>:5911/api/gc/ampr-lz4/mounts` to see every mount the payload can see and why each drive is or isn't available.
 
 You can customize the exact folder locations by expanding **Destination folders**. The compressor automatically checks whether your selected drives have enough free space before allowing the conversion to start.
 
@@ -106,6 +124,8 @@ For example, you could compress a game from your internal SSD to a USB drive, th
 
 Swapping is only available when the original and conversion destination are on different drives.
 
+**Game folders always keep the original.** Delete, Move and Swap are only available for game images.
+
 Because the process temporarily requires additional copies, both drives must have sufficient free space. Full conversion and returned-copy verification are required.
 
 **Important:** Swapping is not an atomic operation. If it's interrupted, successfully copied files are preserved rather than automatically removed. You may need to review the resulting folders manually.
@@ -139,6 +159,10 @@ When canceling, the interface lets you choose whether to keep or delete the part
 If a conversion fails, the compressor won't proceed with the selected move, delete, or swap operation on the original game.
 
 Failed or canceled jobs may still leave partial or completed folders behind. Check the locations reported by the interface before attempting another conversion.
+
+## Quitting the app
+
+Use **Quit app** in the top-right corner to stop the payload. You'll be asked to confirm first. If a conversion is running, quitting cancels it (waiting up to 60 seconds for it to stop cleanly) and leaves an incomplete, unplayable output folder. Load the ELF again with Payload Manager to reopen the app.
 
 ## Things to know
 

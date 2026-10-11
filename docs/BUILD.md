@@ -11,6 +11,14 @@ bash tools/build-ps5.sh
 
 Output: ampr-ps5/lz4-game-compressor.elf and ampr-ps5/lz4-launcher-installer.elf. The build embeds the UI and licensed AMPR runtime. Source mounting is delegated to ShadowMountPlus. The previous third-party application modules are not built.
 
+On macOS, ps5-payload-sdk v0.44 with Homebrew `llvm@18` also works:
+
+```sh
+export PS5_PAYLOAD_SDK=/path/to/ps5-payload-sdk
+export LLVM_CONFIG=/opt/homebrew/opt/llvm@18/bin/llvm-config LLVM_BINDIR=/opt/homebrew/opt/llvm@18/bin
+bash tools/build-ps5.sh
+```
+
 LLVM 18 and the locally installed payload SDK compiled this version. SDK/compiler changes may need adjustments. No proprietary Sony SDK is included.
 
 ## Windows
