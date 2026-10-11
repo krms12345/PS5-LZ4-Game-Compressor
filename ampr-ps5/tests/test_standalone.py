@@ -57,6 +57,11 @@ try:
     assert request('/api/nonexistent')[0]==400
     api('/api/gc/ampr-lz4/delete-partial','GET',False)
     api('/api/gc/ampr-lz4/delete-partial','POST')
-    print('PASS: service assets, discovery, mount order, read-only gate, worker limit, method checks, malformed queries, cleanup and status')
+    api('/api/control/quit?confirm=yes','GET',False)
+    api('/api/control/quit','POST',False)
+    assert b'quitDialog' in request('/')[1]
+    assert api('/api/control/quit?confirm=yes','POST')['message']=='Quitting'
+    service.wait(timeout=5);assert service.returncode==0
+    print('PASS: service assets, discovery, mount order, read-only gate, worker limit, method checks, malformed queries, cleanup, status and quit')
 finally:
     service.terminate();service.wait(timeout=5);mock.shutdown();fixture.cleanup()
